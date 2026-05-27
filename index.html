@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-26-fix-vendita-cer-chart">
+<meta name="execo-version" content="2026-05-27-fix-ante-section-scoped">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -2603,6 +2603,37 @@ function findCellAtColumn(rows, label, colOffset){
   return null;
 }
 
+/* Come findVal, ma cerca l'etichetta SOLO all'interno di una sezione, delimitata
+   dall'intestazione startLabel e (opzionale) dalla successiva endLabel. Serve per
+   etichette DUPLICATE in tab/sezioni diverse: es. "Consumo annuo energia utenza kWh"
+   compare 3 volte nel tab BUDGET (riga 20 = 6.492 fabbisogno POST, riga 71 = 2.670
+   ANTE, riga 81 = 2.670 POST). findVal pescherebbe la prima (6.492); questo helper,
+   scopato a "CONSUMI ANTE INTERVENTO", restituisce il 2.670 corretto. Immune al
+   disallineamento del CSV gviz perché lavora per contenuto, non per coordinata. */
+function findValInSection(rows, startLabel, label, endLabel){
+  const s=startLabel.toLowerCase().trim();
+  const e=endLabel?endLabel.toLowerCase().trim():null;
+  const l=label.toLowerCase().trim();
+  let inSection=false;
+  for(const row of rows){
+    const rowHasLabel = lbl => row.some(c=>c&&c.toString().toLowerCase().includes(lbl));
+    if(!inSection){
+      if(rowHasLabel(s)) inSection=true;
+      continue;
+    }
+    if(e && rowHasLabel(e)) break;
+    for(let i=0;i<row.length;i++){
+      if(row[i]&&row[i].toString().toLowerCase().includes(l)){
+        for(let j=i+1;j<row.length;j++){
+          const v=row[j]?row[j].toString().trim():'';
+          if(v&&v.length>0&&!v.includes('|')) return v;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /* Helper: normalizza un valore percentuale in formato "XX%" (senza decimali).
    Casi gestiti:
    • "21,60%"  → "22%"        (arrotonda)
@@ -3003,11 +3034,15 @@ function updateFromSheet(sheets){
   //     superiore al cash (859 > 784) il totale veniva clampato a 0 creando
   //     l'incoerenza visiva 0€ in alto vs 343+441=784 nelle voci sotto.
   //     Il bonus FV è già valorizzato nel "Guadagno annuo" della pagina 3.
+  // Priorità alla somma per ETICHETTA (gas residuo caldaia + elettricità PdC dalla
+  // rete): è affidabile e immune al disallineamento del CSV gviz. getCell(C108/C91)
+  // resta solo come ultima spiaggia perché le coordinate sul CSV sono inattendibili.
+  const costDetail = Math.round((costGasResPost||0) + (costHpGrid||0));
   const c108 = getCell(budget,'C108') || 0;
   const c91  = getCell(budget,'C91')  || 0;
-  const costRiscPost = (c108 + c91) > 0
-                     ? Math.round(c108 + c91)
-                     : Math.round((costGasResPost||0) + (costHpGrid||0));
+  const costRiscPost = costDetail > 0
+                     ? costDetail
+                     : Math.round(c108 + c91);
   console.log('[pag5 costRiscPost] C108=' + c108 + ', C91=' + c91 + ', costGasResPost=' + costGasResPost + ', costHpGrid=' + costHpGrid + ' → POST=€' + costRiscPost);
 
   const rispAnn        = costGasAnte - costRiscPost;
@@ -3211,10 +3246,14 @@ function updateFromSheet(sheets){
   //   BUDGET!C82 → Consumo annuo pompa di calore kWh  → "Pompa di calore"
   //   OUTPUT!C29 → Energia acquistata dalla rete kWh  → "Da rete (netto)"
   // ════════════════════════════════════════════════════════════════════
-  const c_bdom  = getCell(budget,'C81')
-               || parseNum(findVal(budget,'Consumo annuo energia utenza'));
-  const c_bhp   = getCell(budget,'C82')
-               || parseNum(findVal(budget,'Consumo annuo pompa di calore'));
+  // "Consumo annuo energia utenza" è DUPLICATO nel tab BUDGET (riga 20 = 6.492
+  // fabbisogno POST totale, prima della sezione consumi): findVal globale prenderebbe
+  // quella. Lo scopo alla sezione ANTE → 2.670, il consumo domestico reale (identico
+  // ad ANTE perché l'utenza domestica non cambia). "pompa di calore" è univoco.
+  const c_bdom  = parseNum(findValInSection(budget,'CONSUMI ANTE INTERVENTO','Consumo annuo energia utenza','FABBISOGNO'))
+               || getCell(budget,'C81');
+  const c_bhp   = parseNum(findVal(budget,'Consumo annuo pompa di calore'))
+               || getCell(budget,'C82');
   const c_brete = getCell(output,'C29')
                || parseNum(findVal(output,'Di cui acquisti esterni'))
                || parseNum(findVal(output,'Totale energia elettrica acquistata'));
@@ -3237,24 +3276,31 @@ function updateFromSheet(sheets){
   // (etichette duplicate nel POST INTERVENTO) → mostrava valori SBAGLIATI
   // (2.500 kWh, €850, €1.666). Le celle puntano alla sezione ANTE corretta.
   // ════════════════════════════════════════════════════════════════════
-  // Priorità ai numeri grezzi letti via Sheets API (sheets.budgetAnte), immuni
-  // alla corruzione del CSV gviz. Fallback: getCell sul CSV, poi findVal.
+  // ORDINE FALLBACK: 1) Sheets API (numeri grezzi, ma la chiave è ristretta per
+  // referrer e fallisce su domini non autorizzati come *.github.io); 2) findVal
+  // SCOPATO alla sezione "CONSUMI ANTE INTERVENTO" — affidabile e immune sia al
+  // disallineamento del CSV gviz (le coordinate C71/C74… puntano a righe sbagliate
+  // perché parseCSV scarta le righe vuote) sia alle ETICHETTE DUPLICATE (es.
+  // "Consumo annuo energia utenza kWh" compare a riga 20 = 6.492, prima della
+  // sezione ANTE → findVal globale prenderebbe quella, da cui il bug 6.489/€2.206);
+  // 3) getCell per coordinata come ultima spiaggia.
   const ante = (sheets && !Array.isArray(sheets) && sheets.budgetAnte) || {};
+  const ANTE_SEC='CONSUMI ANTE INTERVENTO', ANTE_END='FABBISOGNO';
   const c_aElKwh   = ante.elKwh
-                  || getCell(budget,'C71')
-                  || parseNum(findVal(budget,'Consumo annuo energia utenza'));
+                  || parseNum(findValInSection(budget,ANTE_SEC,'Consumo annuo energia utenza',ANTE_END))
+                  || getCell(budget,'C71');
   const c_aTermMc  = ante.termMc
-                  || getCell(budget,'C72')
-                  || parseNum(findVal(budget,'Consumo annuo energia termica mc'));
+                  || parseNum(findValInSection(budget,ANTE_SEC,'Consumo annuo energia termica mc',ANTE_END))
+                  || getCell(budget,'C72');
   const c_aElEur   = ante.elEur
-                  || getCell(budget,'C74')
-                  || parseNum(findVal(budget,'Spesa energia elettrica'));
+                  || parseNum(findValInSection(budget,ANTE_SEC,'Spesa energia elettrica',ANTE_END))
+                  || getCell(budget,'C74');
   const c_aTermEur = ante.termEur
-                  || getCell(budget,'C75')
-                  || parseNum(findVal(budget,'Spesa energia termica'));
+                  || parseNum(findValInSection(budget,ANTE_SEC,'Spesa energia termica',ANTE_END))
+                  || getCell(budget,'C75');
   const c_aTot     = ante.tot
-                  || getCell(budget,'C76')
-                  || parseNum(findVal(budget,'Totale costi energetici'));
+                  || parseNum(findValInSection(budget,ANTE_SEC,'Totale costi energetici',ANTE_END))
+                  || getCell(budget,'C76');
   if(c_aElKwh>0)   setText('ba-elet-kwh', fmtKwh(c_aElKwh));
   if(c_aTermMc>0)  setText('ba-term-mc',  c_aTermMc.toLocaleString('it-IT')+' mc');
   if(c_aElEur>0)   setText('ba-elet-eur', fmtEur(c_aElEur));
@@ -3289,6 +3335,16 @@ function updateFromSheet(sheets){
   const c_risparmioAnno = c_ricaviTot + detraz + (c_rispEn||0) - c_costiOp;
   if (c_risparmioAnno > 0) {
     setText('risp-anno', fmtEur(c_risparmioAnno));
+    // FLUSSO NETTO (col. 2) DEVE coincidere col Guadagno annuo (col. 3): entrambi
+    // = Vendita+CER + Detrazione + Risparmio − costi operativi. Le voci mostrate
+    // (b-ricavi-op / b-risp-en) sono appena state riscritte coi valori del foglio,
+    // mentre b-flusso-n era stato calcolato dal blocco _bilancio con valori diversi
+    // → la somma non tornava (es. 2.837+1.100+1.527 ma totale 5.476). Riallineo
+    // solo quando il foglio ha fornito le voci, altrimenti resta il valore coerente
+    // già calcolato dal blocco _bilancio.
+    if (c_vendita > 0 || c_cerEur > 0 || c_rispEn > 0) {
+      setText('b-flusso-n', '+ ' + fmtEur(c_risparmioAnno));
+    }
     // Sottotitolo dinamico con composizione del guadagno
     const sub = fmtEur(c_ricaviTot) + ' vendita+CER · ' +
                 fmtEur(c_rispEn||0) + ' risparmio · ' +
