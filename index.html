@@ -3237,15 +3237,23 @@ function updateFromSheet(sheets){
   // (etichette duplicate nel POST INTERVENTO) → mostrava valori SBAGLIATI
   // (2.500 kWh, €850, €1.666). Le celle puntano alla sezione ANTE corretta.
   // ════════════════════════════════════════════════════════════════════
-  const c_aElKwh   = getCell(budget,'C71')
+  // Priorità ai numeri grezzi letti via Sheets API (sheets.budgetAnte), immuni
+  // alla corruzione del CSV gviz. Fallback: getCell sul CSV, poi findVal.
+  const ante = (sheets && !Array.isArray(sheets) && sheets.budgetAnte) || {};
+  const c_aElKwh   = ante.elKwh
+                  || getCell(budget,'C71')
                   || parseNum(findVal(budget,'Consumo annuo energia utenza'));
-  const c_aTermMc  = getCell(budget,'C72')
+  const c_aTermMc  = ante.termMc
+                  || getCell(budget,'C72')
                   || parseNum(findVal(budget,'Consumo annuo energia termica mc'));
-  const c_aElEur   = getCell(budget,'C74')
+  const c_aElEur   = ante.elEur
+                  || getCell(budget,'C74')
                   || parseNum(findVal(budget,'Spesa energia elettrica'));
-  const c_aTermEur = getCell(budget,'C75')
+  const c_aTermEur = ante.termEur
+                  || getCell(budget,'C75')
                   || parseNum(findVal(budget,'Spesa energia termica'));
-  const c_aTot     = getCell(budget,'C76')
+  const c_aTot     = ante.tot
+                  || getCell(budget,'C76')
                   || parseNum(findVal(budget,'Totale costi energetici'));
   if(c_aElKwh>0)   setText('ba-elet-kwh', fmtKwh(c_aElKwh));
   if(c_aTermMc>0)  setText('ba-term-mc',  c_aTermMc.toLocaleString('it-IT')+' mc');
@@ -3701,9 +3709,26 @@ async function fetchSheet(){
     ...(results['INDICIZZAZIONI'] || [])
   ];
   console.log('[fetchSheet] ✓ ' + nFetched + '/' + tabs.length + ' tab letti, totale ' + all.length + ' righe');
+  // ANTE INTERVENTO: rileggo i 5 valori come numeri grezzi via Sheets API
+  // (UNFORMATTED_VALUE). Il CSV gviz può spezzare i numeri con separatori sui
+  // confini di colonna, corrompendo Consumo elettrico/Spese; l'API restituisce
+  // il valore numerico esatto e allineato alle coordinate C71-C76.
+  let budgetAnte = null;
+  try{
+    const anteUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/BUDGET!C71:C76?valueRenderOption=UNFORMATTED_VALUE&key=${SHEETS_KEY}&_t=${Date.now()}`;
+    const ra = await fetch(anteUrl, {cache:'no-store'});
+    if(ra.ok){
+      const va = (await ra.json()).values || [];
+      const num = i => { const x = va[i] && va[i][0]; return typeof x==='number' ? x : parseNum(x); };
+      // C71,C72,(C73),C74,C75,C76 → indici 0,1,(2),3,4,5
+      budgetAnte = { elKwh:num(0), termMc:num(1), elEur:num(3), termEur:num(4), tot:num(5) };
+      console.log('[fetchSheet] ANTE via Sheets API:', budgetAnte);
+    }
+  }catch(e){ console.warn('[fetchSheet] ANTE Sheets API fallito:', e.message); }
+
   // outputRaw = SOLO il tab OUTPUT (riga 1 = indice 0), per le letture getCell() per
   // coordinata fissa (es. C37/C39): 'output' contiene AMMORTAMENTO in testa e sfaserebbe gli indici.
-  return {start, budget, output, outputRaw: results['OUTPUT'] || [], all};
+  return {start, budget, output, outputRaw: results['OUTPUT'] || [], all, budgetAnte};
 }
 
 /* ══ CATALOGO PRODOTTI ════════════════════════════════════
