@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-27-grafico-card-media-coerenti">
+<meta name="execo-version" content="2026-05-27-card-media-da-grafico">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -3079,114 +3079,31 @@ function updateFromSheet(sheets){
     setText('b-flusso-n','+ € '+flussoN.toLocaleString('it-IT'));
   }
 
-  // — Costi energetici pagina 7 —
-  // PAG 6 — Confronto MEDIA 20 ANNI: Senza impianto vs Con impianto
-  // ════════════════════════════════════════════════════════════════════
-  // I valori vanno mediati su 20 anni, applicando l'inflazione composta:
-  //   • elettricità: +2%/anno acquisto, +1%/anno vendita (dal foglio inflB/inflS)
-  //   • gas: +5%/anno (assunzione standard)
-  //   • decadimento moduli FV: -0.5%/anno
-  // La media è (Σ valore_anno_i) / 20  con valore_anno_i = base × fattore_anno_i
-  // ════════════════════════════════════════════════════════════════════
-  const inflB_dec = (parseNum(inflB) || 2) / 100;   // inflazione acquisto, default 2%
-  const inflS_dec = (parseNum(inflS) || 1) / 100;   // inflazione vendita, default 1%
-  const inflG_dec = 0.05;                            // inflazione gas, standard
-  const decModuli = 0.005;                           // decadimento moduli/anno
-  // Fattore moltiplicativo medio su 20 anni per inflazione costante
-  const avgInflFactor = (rate) => {
-    let s = 0;
-    for (let i = 0; i < 20; i++) s += Math.pow(1+rate, i);
-    return s / 20;
-  };
-  // Fattore vendita: inflazione vendita × decadimento moduli
-  const avgVendFactor = () => {
-    let s = 0;
-    for (let i = 0; i < 20; i++) s += Math.pow(1-decModuli, i) * Math.pow(1+inflS_dec, i);
-    return s / 20;
-  };
-  // CER: incentivo solo primi 10 anni
-  const avgCerFactor = () => {
-    let s = 0;
-    for (let i = 0; i < 10; i++) s += Math.pow(1-decModuli, i) * Math.pow(1+inflS_dec, i);
-    return s / 20;  // diviso per 20 (media su 20 anni, non solo 10)
-  };
-
-  // ── SENZA impianto (media 20 anni) ─────────────────────────────────
-  // Anno 1: spesa elettrica + gas. Su 20a inflazione composta sul totale.
-  const costElSenza  = Math.round(spEl * avgInflFactor(inflB_dec));
-  const costGasSenza = Math.round(spGas * avgInflFactor(inflG_dec));
-  const totSenza = costElSenza + costGasSenza;
-
-  // ── CON impianto (media 20 anni) ───────────────────────────────────
-  const bal = window._bilancio;
-  const venditaKwh = bal ? bal.venduto
-                   : (parseNum(findVal(budget,'Totale surplus energia venduta'))
-                   || getCell(budget,'C19')
-                   || Math.round((prodRaw||4915)*0.63));
-  const cerKwh     = bal ? bal.cerKwh  : Math.round(venditaKwh*0.75);
-  const autoKwhY   = bal ? bal.autoTotal
-                   : (parseNum(findVal(budget,'Totale energia annua autoconsumata'))
-                   || getCell(budget,'C22')
-                   || Math.round((prodRaw||4915)*0.36));
-  const pCERloc    = parseNum(findVal(all,'Incentivo energia condivisa kWh')) || 0.06;
-  // Guadagno vendita anno 1 = vendita × pS + CER × pCER; poi media 20 anni con i fattori
-  const guadVendY1   = Math.round(venditaKwh*(pS||0.11));
-  const guadCerY1    = Math.round(cerKwh*pCERloc);
-  const guadVend     = Math.round(guadVendY1 * avgVendFactor() + guadCerY1 * avgCerFactor());
-  // Elettricità residua immobile (anno 1): SOLO la quota domestica comprata dalla
-  // rete (non coperta dall'autoconsumo FV), letta dal foglio. Poi media 20 anni con
-  // inflazione acquisto. PRIMA si faceva max(0, spesa domestica − TUTTO l'autoconsumo):
-  // sbagliato, perché l'autoconsumo (5.050 kWh) copre sia la casa SIA la pompa di
-  // calore, quindi azzerava la voce (€0) ed era incoerente con "Riscaldamento (pompa)"
-  // che usa correttamente solo l'elettricità PdC dalla rete.
-  const costElRidottoY1 = parseNum(findVal(all,'spesa energia elettrica per utenza domestica extra pdc'))
-                       || (parseNum(findVal(all,'energia prelevata da rete per utenza domestica extra pdc')) * (pB||0.34))
-                       || Math.max(0, spEl - Math.round(autoKwhY*(pB||0.34)));
-  const costElRidotto   = Math.round((costElRidottoY1||0) * avgInflFactor(inflB_dec));
-  // Riscaldamento POST (anno 1): gas residuo + elettr PdC dalla rete. Inflazione media gas+el.
-  const costRiscY1   = (costGasResPost||0) + (costHpGrid||0);
-  const costRiscNuovo = Math.round(costRiscY1 * avgInflFactor((inflB_dec+inflG_dec)/2));
-  // Totale CON impianto (può essere negativo = saldo a favore / guadagno netto)
-  const totCon = costElRidotto - guadVend + costRiscNuovo;
-
-  setText('c7-el-s','€ '+costElSenza.toLocaleString('it-IT'));
-  setText('c7-gas-s','€ '+costGasSenza.toLocaleString('it-IT'));
-  setText('c7-tot-s','€ '+totSenza.toLocaleString('it-IT'));
-  setText('c7-el-c','€ '+costElRidotto.toLocaleString('it-IT'));
-  setText('c7-vend-c','− € '+guadVend.toLocaleString('it-IT'));
-  setText('c7-risc-c','€ '+costRiscNuovo.toLocaleString('it-IT'));
-  // Totale: se negativo (guadagno netto), mostro "+ € X" verde brillante; altrimenti costo normale
+  // PAG 6 — Confronto MEDIA ANNUA 20 ANNI: Senza impianto vs Con impianto.
+  // La card mostra la MEDIA su 20 anni delle STESSE serie del grafico cCosti
+  // (costanti C20): foglio → grafico → card. Così la card coincide ESATTAMENTE
+  // con la media delle barre del grafico (prima usava basi diverse e non tornava).
+  const m_elS  = avg20(C20.sEl,  C20.rEl);
+  const m_gasS = avg20(C20.sGas, C20.rGas);
+  const m_elC  = avg20(C20.cEl,  C20.rEl);
+  const m_vendC= avg20(C20.cVend,C20.rVend);
+  const m_riscC= avg20(C20.cRisc,C20.rGas);
+  const m_saldo= m_elC - m_vendC + m_riscC;
+  setText('c7-el-s','€ '+m_elS.toLocaleString('it-IT'));
+  setText('c7-gas-s','€ '+m_gasS.toLocaleString('it-IT'));
+  setText('c7-tot-s','€ '+(m_elS+m_gasS).toLocaleString('it-IT'));
+  setText('c7-el-c','€ '+m_elC.toLocaleString('it-IT'));
+  setText('c7-vend-c','− € '+m_vendC.toLocaleString('it-IT'));
+  setText('c7-risc-c','€ '+m_riscC.toLocaleString('it-IT'));
   const totEl = document.getElementById('c7-tot-c');
   if (totEl) {
-    if (totCon < 0) {
-      totEl.textContent = '+ € '+Math.abs(totCon).toLocaleString('it-IT');
+    if (m_saldo < 0) {
+      totEl.textContent = '+ € '+Math.abs(m_saldo).toLocaleString('it-IT');
       totEl.style.color = '#2E7D32';
     } else {
-      totEl.textContent = '€ '+totCon.toLocaleString('it-IT');
+      totEl.textContent = '€ '+m_saldo.toLocaleString('it-IT');
       totEl.style.color = '';
     }
-  }
-
-  // ── Grafico costi annuali (cCosti) alimentato dalle STESSE basi della card ──
-  // Flusso: foglio → grafico (serie per anno) → card (= media 20 anni delle barre).
-  // Uso gli stessi fattori di inflazione/decadimento usati sopra per le medie, così
-  // la media di ciascuna serie coincide ESATTAMENTE coi totali mostrati nella card:
-  //   mean(senzaArr) = costElSenza + costGasSenza = totSenza
-  //   mean(conArr)   = costElRidotto − guadVend + costRiscNuovo = totCon (Saldo annuo)
-  if (typeof cCostiChart !== 'undefined') {
-    const senzaArr = [], conArr = [];
-    for (let i = 0; i < 20; i++) {
-      const inflEl   = Math.pow(1+inflB_dec, i);
-      const inflGas  = Math.pow(1+inflG_dec, i);
-      const inflRisc = Math.pow(1+(inflB_dec+inflG_dec)/2, i);
-      const vendFx   = Math.pow(1-decModuli, i) * Math.pow(1+inflS_dec, i);
-      senzaArr.push(Math.round(spEl*inflEl + spGas*inflGas));
-      const vendIncome = guadVendY1*vendFx + (i < 10 ? guadCerY1*vendFx : 0);
-      conArr.push(Math.round((costElRidottoY1||0)*inflEl - vendIncome + costRiscY1*inflRisc));
-    }
-    cCostiChart.data.datasets[0].data = senzaArr;
-    cCostiChart.data.datasets[1].data = conArr;
-    cCostiChart.update();
   }
 
   // — Investimento pagina 10 —
@@ -4513,15 +4430,26 @@ const ammChart=new Chart(document.getElementById('cAmm'),{
         afterDataLimits:s=>{s.min=Math.min(s.min,-1000);}}}}
 });
 
-/* ── Costi energetici annuali chart (cCosti) ──
-   Placeholder iniziale; updateFromSheet() lo ripopola coi dati del foglio
-   (foglio → grafico → card: la card mostra la MEDIA 20 anni di queste barre). */
-const cCostiChart = (()=>{
+/* ── Costi energetici annuali (pag.6): basi anno 1 + inflazioni ──
+   UNICA fonte condivisa tra il grafico cCosti (serie 20 anni) e la card
+   "media annua 20 anni" (= media di quelle serie). Così grafico e card
+   coincidono per costruzione. */
+const C20 = { sEl:850, sGas:816, cEl:267, cVend:154, cRisc:453,
+              rEl:0.02, rGas:0.05, rVend:0.01 };
+/* Media su 20 anni di una voce a inflazione composta costante. */
+const avg20 = (base, rate) => {
+  let s = 0;
+  for (let i = 0; i < 20; i++) s += base * Math.pow(1+rate, i);
+  return Math.round(s/20);
+};
+
+/* ── Costi energetici annuali chart (page 7) ── */
+(()=>{
   const yr=Array.from({length:20},(_,i)=>2026+i);
-  // Stima: elettricità cresce +2%/anno, gas +5%/anno
-  const senzaArr=yr.map((_,i)=>Math.round(850*Math.pow(1.02,i)+816*Math.pow(1.05,i)));
-  const conArr  =yr.map((_,i)=>Math.round(267*Math.pow(1.02,i)-154*Math.pow(1.01,i)+453*Math.pow(1.05,i)));
-  return new Chart(document.getElementById('cCosti'),{
+  // Serie 20 anni: elettricità +2%/anno, gas +5%/anno, vendita +1%/anno
+  const senzaArr=yr.map((_,i)=>Math.round(C20.sEl*Math.pow(1+C20.rEl,i)+C20.sGas*Math.pow(1+C20.rGas,i)));
+  const conArr  =yr.map((_,i)=>Math.round(C20.cEl*Math.pow(1+C20.rEl,i)-C20.cVend*Math.pow(1+C20.rVend,i)+C20.cRisc*Math.pow(1+C20.rGas,i)));
+  new Chart(document.getElementById('cCosti'),{
     type:'bar',
     data:{labels:yr,datasets:[
       {label:'Senza impianto',data:senzaArr,backgroundColor:'#1565C0',borderWidth:0,borderRadius:0},
