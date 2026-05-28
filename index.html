@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-27-card-media-da-grafico">
+<meta name="execo-version" content="2026-05-27-pulizia-commenti-obsoleti">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -3018,10 +3018,8 @@ function updateFromSheet(sheets){
   const costGasAnte    = parseNum(findVal(budget,'Spesa energia termica'))
                       || (pGas ? Math.round(gasAnteNum*pGas) : 816);
 
-  // Voci dettaglio (etichetta). Letti dal foglio per evitare stime fragili:
-  // costHpGrid = spesa elettrica della PdC effettivamente comprata dalla rete.
-  // PRIMA era stimato come consumo PdC × 34% × prezzo (per questo cliente ≈ giusto
-  // per coincidenza, ma errato con altri dimensionamenti FV).
+  // Voci dettaglio lette per etichetta dal foglio (evita stime fragili):
+  // costHpGrid = spesa elettrica della PdC comprata dalla rete.
   const costGasResPost = parseNum(findVal(all,'Spesa energia termica caldaia')) || 0;
   const hpKwhDaRete    = parseNum(findVal(all,'energia elettrica prelevata da rete per pompa di calore'))
                       || parseNum(findVal(all,'Acquistata dalla rete'))
@@ -3029,19 +3027,9 @@ function updateFromSheet(sheets){
   const costHpGrid     = parseNum(findVal(all,'Spesa energia elettrica pompa di calore'))
                       || (pB ? Math.round(hpKwhDaRete*pB) : 441);
 
-  // ── VALORE POST INTERVENTO ───────────────────────────────────────────
-  // 1° tentativo: somma esplicita BUDGET!C108 + BUDGET!C91 (specifica utente).
-  //   Tipicamente: C91 = elettricità PdC dalla rete, C108 = gas residuo.
-  // Fallback: somma cash delle due voci dettaglio mostrate sotto:
-  //   gas residuo caldaia + elettricità PdC dalla rete = €343 + €441 = €784
-  // NB: NON si applica più il "bonus FV" come riduzione del totale: era una
-  //     ottimizzazione concettuale (autoconsumo FV gratuito), ma con bonus
-  //     superiore al cash (859 > 784) il totale veniva clampato a 0 creando
-  //     l'incoerenza visiva 0€ in alto vs 343+441=784 nelle voci sotto.
-  //     Il bonus FV è già valorizzato nel "Guadagno annuo" della pagina 3.
-  // Priorità alla somma per ETICHETTA (gas residuo caldaia + elettricità PdC dalla
-  // rete): è affidabile e immune al disallineamento del CSV gviz. getCell(C108/C91)
-  // resta solo come ultima spiaggia perché le coordinate sul CSV sono inattendibili.
+  // VALORE POST INTERVENTO = gas residuo caldaia + elettricità PdC dalla rete.
+  // Priorità alla somma per ETICHETTA (immune al disallineamento del CSV gviz);
+  // getCell(C108/C91) solo come ultima spiaggia (coordinate CSV inattendibili).
   const costDetail = Math.round((costGasResPost||0) + (costHpGrid||0));
   const c108 = getCell(budget,'C108') || 0;
   const c91  = getCell(budget,'C91')  || 0;
@@ -3080,28 +3068,80 @@ function updateFromSheet(sheets){
   }
 
   // PAG 6 — Confronto MEDIA ANNUA 20 ANNI: Senza impianto vs Con impianto.
-  // La card mostra la MEDIA su 20 anni delle STESSE serie del grafico cCosti
-  // (costanti C20): foglio → grafico → card. Così la card coincide ESATTAMENTE
-  // con la media delle barre del grafico (prima usava basi diverse e non tornava).
-  const m_elS  = avg20(C20.sEl,  C20.rEl);
-  const m_gasS = avg20(C20.sGas, C20.rGas);
-  const m_elC  = avg20(C20.cEl,  C20.rEl);
-  const m_vendC= avg20(C20.cVend,C20.rVend);
-  const m_riscC= avg20(C20.cRisc,C20.rGas);
-  const m_saldo= m_elC - m_vendC + m_riscC;
+  // ════════════════════════════════════════════════════════════════════
+  // Tutto DINAMICO dal foglio. Costruisco le serie annue (inflazione composta:
+  // elettricità +inflB, gas +5%, vendita +inflS con decadimento moduli −0,5%;
+  // CER solo primi 10 anni), aggiorno il grafico cCosti e nella card mostro la
+  // MEDIA 20 anni di quelle stesse serie → grafico e card coincidono.
+  //   • Senza impianto = spesa → Totale mostrato col segno «−».
+  //   • Con l'impianto = saldo: vendita+CER (incasso, positivo) − elettricità −
+  //     riscaldamento. Se negativo è un guadagno: barre del grafico sotto lo zero
+  //     e Saldo annuo mostrato «+ €» (verde).
+  // ════════════════════════════════════════════════════════════════════
+  const inflB_dec = (parseNum(inflB) || 2) / 100;   // inflazione acquisto
+  const inflS_dec = (parseNum(inflS) || 1) / 100;   // inflazione vendita
+  const inflG_dec = 0.05;                            // inflazione gas
+  const decModuli = 0.005;                           // decadimento moduli/anno
+
+  // Basi anno 1 (dal foglio)
+  const bal = window._bilancio;
+  const venditaKwh = bal ? bal.venduto
+                   : (parseNum(findVal(budget,'Totale surplus energia venduta'))
+                   || Math.round((prodRaw||4915)*0.63));
+  const cerKwh    = bal ? bal.cerKwh : Math.round(venditaKwh*0.75);
+  const pCERloc   = parseNum(findVal(all,'Incentivo energia condivisa kWh')) || 0.06;
+  const guadVendY1 = Math.round(venditaKwh*(pS||0.11));   // vendita €/anno 1
+  const guadCerY1  = Math.round(cerKwh*pCERloc);          // CER €/anno 1
+  const costElRidottoY1 = parseNum(findVal(all,'spesa energia elettrica per utenza domestica extra pdc'))
+                       || (parseNum(findVal(all,'energia prelevata da rete per utenza domestica extra pdc')) * (pB||0.34))
+                       || 0;                              // elettr. domestica residua €/anno 1
+  const costRiscY1 = (costGasResPost||0) + (costHpGrid||0); // riscaldamento (PdC) €/anno 1
+
+  // Serie 20 anni (sorgente unica di grafico e card)
+  const senzaArr = [], conArr = [];
+  let sumElS=0, sumGasS=0, sumElC=0, sumVend=0, sumRiscC=0;
+  for (let i = 0; i < 20; i++) {
+    const fEl   = Math.pow(1+inflB_dec, i);
+    const fGas  = Math.pow(1+inflG_dec, i);
+    const fRisc = Math.pow(1+(inflB_dec+inflG_dec)/2, i);
+    const fVend = Math.pow(1-decModuli, i) * Math.pow(1+inflS_dec, i);
+    const elS   = Math.round(spEl*fEl),  gasS = Math.round(spGas*fGas);
+    senzaArr.push(elS + gasS);
+    const vendIncome = Math.round(guadVendY1*fVend + (i < 10 ? guadCerY1*fVend : 0));
+    const elC   = Math.round((costElRidottoY1||0)*fEl);
+    const riscC = Math.round(costRiscY1*fRisc);
+    conArr.push(elC - vendIncome + riscC);   // <0 = guadagno annuo (barra sotto zero)
+    sumElS+=elS; sumGasS+=gasS; sumElC+=elC; sumVend+=vendIncome; sumRiscC+=riscC;
+  }
+
+  // Aggiorna il grafico (foglio → grafico)
+  if (typeof cCostiChart !== 'undefined') {
+    cCostiChart.data.datasets[0].data = senzaArr;
+    cCostiChart.data.datasets[1].data = conArr;
+    cCostiChart.update();
+  }
+
+  // Card = MEDIA 20 anni delle stesse serie (grafico → card)
+  const m_elS   = Math.round(sumElS/20);
+  const m_gasS  = Math.round(sumGasS/20);
+  const m_totS  = m_elS + m_gasS;
+  const m_elC   = Math.round(sumElC/20);
+  const m_vend  = Math.round(sumVend/20);
+  const m_riscC = Math.round(sumRiscC/20);
+  const m_saldo = Math.round((sumElC - sumVend + sumRiscC)/20);  // = media barre verdi
   setText('c7-el-s','€ '+m_elS.toLocaleString('it-IT'));
   setText('c7-gas-s','€ '+m_gasS.toLocaleString('it-IT'));
-  setText('c7-tot-s','€ '+(m_elS+m_gasS).toLocaleString('it-IT'));
+  setText('c7-tot-s','− € '+m_totS.toLocaleString('it-IT'));      // è una spesa
   setText('c7-el-c','€ '+m_elC.toLocaleString('it-IT'));
-  setText('c7-vend-c','− € '+m_vendC.toLocaleString('it-IT'));
+  setText('c7-vend-c','+ € '+m_vend.toLocaleString('it-IT'));     // incasso (positivo)
   setText('c7-risc-c','€ '+m_riscC.toLocaleString('it-IT'));
   const totEl = document.getElementById('c7-tot-c');
   if (totEl) {
-    if (m_saldo < 0) {
+    if (m_saldo < 0) {            // guadagno netto
       totEl.textContent = '+ € '+Math.abs(m_saldo).toLocaleString('it-IT');
       totEl.style.color = '#2E7D32';
-    } else {
-      totEl.textContent = '€ '+m_saldo.toLocaleString('it-IT');
+    } else {                      // spesa residua
+      totEl.textContent = '− € '+m_saldo.toLocaleString('it-IT');
       totEl.style.color = '';
     }
   }
@@ -3184,7 +3224,7 @@ function updateFromSheet(sheets){
   if(c_cerVal>0)  setText('p3-cer',      c_cerVal.toLocaleString('it-IT')+' kWh'+(c_cerPctF?' ('+c_cerPctF+')':''));
   if(c_autoPctF)  setText('p3-pct-ac', c_autoPctF);
   if(c_vendPctF)  setText('p3-pct-vd', c_vendPctF);
-  if(c_cerPctF)   setText('p3-pct-cr', c_cerPctF);  // OUTPUT!B21 = 58,78% (era mancante)
+  if(c_cerPctF)   setText('p3-pct-cr', c_cerPctF);  // % CER (OUTPUT!B21)
   // Badge nel grafico distribuzione
   if(c_autoVal>0) setText('p3-b-ac', c_autoVal.toLocaleString('it-IT')+' kWh');
   if(c_vendVal>0) setText('p3-b-vd', c_vendVal.toLocaleString('it-IT')+' kWh');
@@ -3215,26 +3255,13 @@ function updateFromSheet(sheets){
     window._sheetGridNet = c_brete;  // protegge da sovrascrittura di calcEnergyBalance
   }
 
-  // PAG 3 — Bilancio ANTE intervento (consumi attuali pre-installazione)
-  // ════════════════════════════════════════════════════════════════════
-  // Letti DIRETTAMENTE dalle celle BUDGET (sezione "CONSUMI ANTE INTERVENTO"):
-  //   C71 = Consumo annuo energia utenza kWh        (es. 6.489)
-  //   C72 = Consumo annuo energia termica mc        (es. 680)
-  //   C74 = Spesa energia elettrica                 (es. € 2.206)
-  //   C75 = Spesa energia termica                   (es. € 816)
-  //   C76 = Totale costi energetici                 (es. € 3.022)
-  // NOTA: prima si usava findVal(all,…) che catturava la prima occorrenza
-  // (etichette duplicate nel POST INTERVENTO) → mostrava valori SBAGLIATI
-  // (2.500 kWh, €850, €1.666). Le celle puntano alla sezione ANTE corretta.
-  // ════════════════════════════════════════════════════════════════════
-  // ORDINE FALLBACK: 1) Sheets API (numeri grezzi, ma la chiave è ristretta per
-  // referrer e fallisce su domini non autorizzati come *.github.io); 2) findVal
-  // SCOPATO alla sezione "CONSUMI ANTE INTERVENTO" — affidabile e immune sia al
-  // disallineamento del CSV gviz (le coordinate C71/C74… puntano a righe sbagliate
-  // perché parseCSV scarta le righe vuote) sia alle ETICHETTE DUPLICATE (es.
-  // "Consumo annuo energia utenza kWh" compare a riga 20 = 6.492, prima della
-  // sezione ANTE → findVal globale prenderebbe quella, da cui il bug 6.489/€2.206);
-  // 3) getCell per coordinata come ultima spiaggia.
+  // PAG 3 — Bilancio ANTE intervento (consumi attuali pre-installazione).
+  // Ordine fallback: 1) Sheets API (numeri grezzi, ma la chiave è ristretta per
+  // referrer e fallisce su domini come *.github.io); 2) findVal SCOPATO alla
+  // sezione "CONSUMI ANTE INTERVENTO" — immune sia al disallineamento del CSV
+  // gviz (parseCSV scarta le righe vuote) sia alle etichette duplicate (es.
+  // "Consumo annuo energia utenza kWh" compare anche a riga 20 = 6.492, fuori
+  // sezione, che findVal globale prenderebbe per prima); 3) getCell per coordinata.
   const ante = (sheets && !Array.isArray(sheets) && sheets.budgetAnte) || {};
   const ANTE_SEC='CONSUMI ANTE INTERVENTO', ANTE_END='FABBISOGNO';
   const c_aElKwh   = ante.elKwh
@@ -3272,15 +3299,8 @@ function updateFromSheet(sheets){
   }
   if(c_rispEn>0) setText('b-risp-en','+ '+fmtEur(c_rispEn));
 
-  // PAG 3 — Box RISPARMIO TOTALE (mega-box guadagno)
-  // ════════════════════════════════════════════════════════════════════
-  // Il "guadagno annuo" è il FLUSSO NETTO annuo dell'investimento:
-  //   = Vendita+CER + Risparmio energia + Detrazione − Costi operativi
-  // Coincide con "FLUSSO NETTO" mostrato sopra nella stessa pagina.
-  // NOTA: prima si sommava c_speseAnte (€3.022) + c_flussoNetto, raddoppiando
-  // di fatto il risparmio energia (già implicito nel "Risparmio energia" del
-  // flusso anno 1 = autoconsumo × prezzo elettricità). Calcolo corretto:
-  // ════════════════════════════════════════════════════════════════════
+  // PAG 3 — Box RISPARMIO TOTALE (mega-box "guadagno annuo"):
+  //   = Vendita+CER + Risparmio energia + Detrazione − Costi operativi.
   const c_ricaviTot = (c_vendita||0) + (c_cerEur||0);   // vendita FV + CER
   const c_costiOp   = Math.round(KWP*9);                 // manut 6 €/kWp + assic 3 €/kWp
   const c_risparmioAnno = c_ricaviTot + detraz + (c_rispEn||0) - c_costiOp;
@@ -4430,26 +4450,15 @@ const ammChart=new Chart(document.getElementById('cAmm'),{
         afterDataLimits:s=>{s.min=Math.min(s.min,-1000);}}}}
 });
 
-/* ── Costi energetici annuali (pag.6): basi anno 1 + inflazioni ──
-   UNICA fonte condivisa tra il grafico cCosti (serie 20 anni) e la card
-   "media annua 20 anni" (= media di quelle serie). Così grafico e card
-   coincidono per costruzione. */
-const C20 = { sEl:850, sGas:816, cEl:267, cVend:154, cRisc:453,
-              rEl:0.02, rGas:0.05, rVend:0.01 };
-/* Media su 20 anni di una voce a inflazione composta costante. */
-const avg20 = (base, rate) => {
-  let s = 0;
-  for (let i = 0; i < 20; i++) s += base * Math.pow(1+rate, i);
-  return Math.round(s/20);
-};
-
-/* ── Costi energetici annuali chart (page 7) ── */
-(()=>{
+/* ── Costi energetici annuali chart (cCosti) ──
+   Placeholder iniziale; updateFromSheet() lo ripopola coi dati del foglio
+   (foglio → grafico → card: la card mostra la MEDIA 20 anni di queste barre).
+   "Con l'impianto" può andare sotto zero = saldo annuo a favore (guadagno). */
+const cCostiChart = (()=>{
   const yr=Array.from({length:20},(_,i)=>2026+i);
-  // Serie 20 anni: elettricità +2%/anno, gas +5%/anno, vendita +1%/anno
-  const senzaArr=yr.map((_,i)=>Math.round(C20.sEl*Math.pow(1+C20.rEl,i)+C20.sGas*Math.pow(1+C20.rGas,i)));
-  const conArr  =yr.map((_,i)=>Math.round(C20.cEl*Math.pow(1+C20.rEl,i)-C20.cVend*Math.pow(1+C20.rVend,i)+C20.cRisc*Math.pow(1+C20.rGas,i)));
-  new Chart(document.getElementById('cCosti'),{
+  const senzaArr=yr.map((_,i)=>Math.round(850*Math.pow(1.02,i)+816*Math.pow(1.05,i)));
+  const conArr  =yr.map((_,i)=>Math.round(267*Math.pow(1.02,i)-154*Math.pow(1.01,i)+453*Math.pow(1.05,i)));
+  return new Chart(document.getElementById('cCosti'),{
     type:'bar',
     data:{labels:yr,datasets:[
       {label:'Senza impianto',data:senzaArr,backgroundColor:'#1565C0',borderWidth:0,borderRadius:0},
