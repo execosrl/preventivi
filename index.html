@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-27-pulizia-commenti-obsoleti">
+<meta name="execo-version" content="2026-05-27-cer-20-anni">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -3070,12 +3070,12 @@ function updateFromSheet(sheets){
   // PAG 6 — Confronto MEDIA ANNUA 20 ANNI: Senza impianto vs Con impianto.
   // ════════════════════════════════════════════════════════════════════
   // Tutto DINAMICO dal foglio. Costruisco le serie annue (inflazione composta:
-  // elettricità +inflB, gas +5%, vendita +inflS con decadimento moduli −0,5%;
-  // CER solo primi 10 anni), aggiorno il grafico cCosti e nella card mostro la
+  // elettricità +inflB, gas +5%, vendita+CER +inflS con decadimento moduli −0,5%;
+  // CER per tutti i 20 anni), aggiorno il grafico cCosti e nella card mostro la
   // MEDIA 20 anni di quelle stesse serie → grafico e card coincidono.
   //   • Senza impianto = spesa → Totale mostrato col segno «−».
   //   • Con l'impianto = saldo: vendita+CER (incasso, positivo) − elettricità −
-  //     riscaldamento. Se negativo è un guadagno: barre del grafico sotto lo zero
+  //     riscaldamento. Se positivo è un guadagno: barre del grafico sopra lo zero
   //     e Saldo annuo mostrato «+ €» (verde).
   // ════════════════════════════════════════════════════════════════════
   const inflB_dec = (parseNum(inflB) || 2) / 100;   // inflazione acquisto
@@ -3106,11 +3106,12 @@ function updateFromSheet(sheets){
     const fRisc = Math.pow(1+(inflB_dec+inflG_dec)/2, i);
     const fVend = Math.pow(1-decModuli, i) * Math.pow(1+inflS_dec, i);
     const elS   = Math.round(spEl*fEl),  gasS = Math.round(spGas*fGas);
-    senzaArr.push(elS + gasS);
-    const vendIncome = Math.round(guadVendY1*fVend + (i < 10 ? guadCerY1*fVend : 0));
+    // Convenzione grafico: positivo = in alto (guadagno), negativo = in basso (spesa).
+    senzaArr.push(-(elS + gasS));            // spesa → sotto lo zero
+    const vendIncome = Math.round(guadVendY1*fVend + guadCerY1*fVend);  // CER per tutti i 20 anni
     const elC   = Math.round((costElRidottoY1||0)*fEl);
     const riscC = Math.round(costRiscY1*fRisc);
-    conArr.push(elC - vendIncome + riscC);   // <0 = guadagno annuo (barra sotto zero)
+    conArr.push(vendIncome - elC - riscC);   // >0 = guadagno annuo (barra sopra lo zero)
     sumElS+=elS; sumGasS+=gasS; sumElC+=elC; sumVend+=vendIncome; sumRiscC+=riscC;
   }
 
@@ -3128,20 +3129,20 @@ function updateFromSheet(sheets){
   const m_elC   = Math.round(sumElC/20);
   const m_vend  = Math.round(sumVend/20);
   const m_riscC = Math.round(sumRiscC/20);
-  const m_saldo = Math.round((sumElC - sumVend + sumRiscC)/20);  // = media barre verdi
+  const m_saldo = Math.round((sumVend - sumElC - sumRiscC)/20);  // = media barre verdi (>0 = guadagno)
   setText('c7-el-s','€ '+m_elS.toLocaleString('it-IT'));
   setText('c7-gas-s','€ '+m_gasS.toLocaleString('it-IT'));
   setText('c7-tot-s','− € '+m_totS.toLocaleString('it-IT'));      // è una spesa
-  setText('c7-el-c','€ '+m_elC.toLocaleString('it-IT'));
+  setText('c7-el-c','− € '+m_elC.toLocaleString('it-IT'));
   setText('c7-vend-c','+ € '+m_vend.toLocaleString('it-IT'));     // incasso (positivo)
-  setText('c7-risc-c','€ '+m_riscC.toLocaleString('it-IT'));
+  setText('c7-risc-c','− € '+m_riscC.toLocaleString('it-IT'));
   const totEl = document.getElementById('c7-tot-c');
   if (totEl) {
-    if (m_saldo < 0) {            // guadagno netto
-      totEl.textContent = '+ € '+Math.abs(m_saldo).toLocaleString('it-IT');
+    if (m_saldo >= 0) {           // guadagno netto
+      totEl.textContent = '+ € '+m_saldo.toLocaleString('it-IT');
       totEl.style.color = '#2E7D32';
     } else {                      // spesa residua
-      totEl.textContent = '− € '+m_saldo.toLocaleString('it-IT');
+      totEl.textContent = '− € '+Math.abs(m_saldo).toLocaleString('it-IT');
       totEl.style.color = '';
     }
   }
@@ -3363,9 +3364,9 @@ function updateFromSheet(sheets){
     const vendSeries = COLS_20.map((_,i) =>
       Math.round(venditaKwhBase * Math.pow(0.995, i) * pS_loc * Math.pow(1+inflS_num, i))
     );
-    // CER: incentivo fisso primi 10 anni, zero dopo (regola GSE CER)
+    // CER: tariffa incentivante GSE per tutti i 20 anni
     const cerSeries  = COLS_20.map((_,i) =>
-      i < 10 ? Math.round(cerKwhBase * Math.pow(0.995, i) * pCER_loc * Math.pow(1+inflS_num, i)) : 0
+      Math.round(cerKwhBase * Math.pow(0.995, i) * pCER_loc * Math.pow(1+inflS_num, i))
     );
     const sumVend20 = vendSeries.reduce((a,b)=>a+b, 0);
     const sumCer20  = cerSeries.reduce((a,b)=>a+b, 0);
