@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-27-pag6-da-output-rows">
+<meta name="execo-version" content="2026-05-27-pag6-senza-da-output">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -3082,12 +3082,16 @@ function updateFromSheet(sheets){
   const inflG_dec = 0.05;                            // inflazione gas
   const decModuli = 0.005;                           // decadimento moduli/anno
 
-  // ── SENZA impianto: elettricità + gas, inflazione composta (positivo = sotto zero) ──
+  // Righe OUTPUT lette via Sheets API (null se non raggiungibile → fallback sintetico)
+  const out20 = (sheets && !Array.isArray(sheets)) ? sheets.out20 : null;
+  const hasOut = !!(out20 && out20.ricavi && out20.ricavi.length === 20);
+
+  // ── SENZA impianto: elettricità (OUTPUT!C72:V72) + gas (C73:V73), media 20 anni ──
   const senzaArr = [];
   let sumElS=0, sumGasS=0;
   for (let i = 0; i < 20; i++) {
-    const elS  = Math.round(spEl*Math.pow(1+inflB_dec,i));
-    const gasS = Math.round(spGas*Math.pow(1+inflG_dec,i));
+    const elS  = hasOut ? Math.round(out20.senzaEl[i]||0)  : Math.round(spEl*Math.pow(1+inflB_dec,i));
+    const gasS = hasOut ? Math.round(out20.senzaGas[i]||0) : Math.round(spGas*Math.pow(1+inflG_dec,i));
     senzaArr.push(-(elS + gasS));   // spesa → sotto lo zero
     sumElS+=elS; sumGasS+=gasS;
   }
@@ -3096,10 +3100,9 @@ function updateFromSheet(sheets){
   //   Elettricità – Immobile = OUTPUT!C32:V32 · Riscaldamento = C33:V33
   //   Vendita energia + CER  = OUTPUT!C40:V40 ("Totale ricavi": vendita+detrazione+CER)
   // Lette via Sheets API (sheets.out20). Fallback: modello sintetico dal foglio.
-  const out20 = (sheets && !Array.isArray(sheets)) ? sheets.out20 : null;
   const conArr = [];
   let sumElC=0, sumVend=0, sumRiscC=0;
-  if (out20 && out20.ricavi && out20.ricavi.length === 20) {
+  if (hasOut) {
     for (let i = 0; i < 20; i++) {
       const elC = Math.round(out20.elC[i]||0);
       const riscC = Math.round(out20.risc[i]||0);
@@ -3764,20 +3767,21 @@ async function fetchSheet(){
     }
   }catch(e){ console.warn('[fetchSheet] ANTE Sheets API fallito:', e.message); }
 
-  // PAG 6 "Con l'impianto" — medie 20 anni lette DIRETTAMENTE dalle righe OUTPUT
-  // (richiesta utente): C32:V32 = costi elettrici post, C33:V33 = costi termici post,
-  // C40:V40 = Totale ricavi (vendita+detrazione+CER). Lettura per coordinata via
-  // Sheets API (il CSV gviz scarta le righe vuote e disallinea i numeri di riga).
+  // PAG 6 — medie 20 anni lette DIRETTAMENTE dalle righe OUTPUT (richiesta utente).
+  //   CON l'impianto:   C32:V32 costi elettrici post · C33:V33 costi termici post ·
+  //                     C40:V40 "Totale ricavi" (vendita+detrazione+CER)
+  //   SENZA l'impianto: C72:V72 costi elettrici ante · C73:V73 costi termici ante
+  // Lettura per coordinata via Sheets API (il CSV gviz scarta le righe vuote).
   let out20 = null;
   try{
-    const u = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/OUTPUT!C32:V40?valueRenderOption=UNFORMATTED_VALUE&key=${SHEETS_KEY}&_t=${Date.now()}`;
+    const u = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/OUTPUT!C32:V73?valueRenderOption=UNFORMATTED_VALUE&key=${SHEETS_KEY}&_t=${Date.now()}`;
     const ro = await fetch(u, {cache:'no-store'});
     if(ro.ok){
       const vv = (await ro.json()).values || [];
       const row = idx => Array.from({length:20}, (_,k)=>{ const x=(vv[idx]||[])[k]; return typeof x==='number'?x:(parseNum(x)||0); });
-      // range C32:V40 → indice 0=riga32, 1=riga33, 8=riga40
-      out20 = { elC: row(0), risc: row(1), ricavi: row(8) };
-      console.log('[fetchSheet] OUTPUT C32/C33/C40 via Sheets API OK');
+      // indice = numeroRiga − 32: 32→elettr post, 33→termico post, 40→ricavi, 72→elettr ante, 73→termico ante
+      out20 = { elC: row(0), risc: row(1), ricavi: row(8), senzaEl: row(40), senzaGas: row(41) };
+      console.log('[fetchSheet] OUTPUT righe pag.6 via Sheets API OK');
     }
   }catch(e){ console.warn('[fetchSheet] OUTPUT rows Sheets API fallito:', e.message); }
 
