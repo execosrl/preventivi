@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-27-pag6-senza-da-output">
+<meta name="execo-version" content="2026-05-29-pag6-da-gviz">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -2634,6 +2634,40 @@ function findValInSection(rows, startLabel, label, endLabel){
   return null;
 }
 
+/* ── Lettura serie 20 anni (colonne C..V) da una riga del tab OUTPUT (CSV gviz) ──
+   Usato per la pagina 6. Niente Sheets API: lo stesso canale gviz che carica il
+   resto della pagina (più affidabile lato browser). Numeri formattati → parseNum. */
+function outRowSeries(rows, label){
+  const lc=label.toLowerCase().trim();
+  for(const r of rows){
+    const c0=(r[0]!=null?r[0]:'').toString().toLowerCase().trim();
+    const c1=(r[1]!=null?r[1]:'').toString().toLowerCase().trim();
+    if(c0===lc || c1===lc){
+      return Array.from({length:20},(_,k)=> parseNum(r[k+2]) || 0);   // C..V = indici 2..21
+    }
+  }
+  return null;
+}
+/* Come sopra ma per etichette DUPLICATE (es. "Energia elettrica" appare sia ANTE
+   sia POST): àncora su una riga univoca vicina e prende la riga 'offset' posizioni
+   prima, verificando che l'etichetta contenga 'expect'. */
+function outRowSeriesBefore(rows, anchorLabel, offset, expect){
+  const lc=anchorLabel.toLowerCase().trim();
+  for(let i=0;i<rows.length;i++){
+    const c0=(rows[i][0]!=null?rows[i][0]:'').toString().toLowerCase().trim();
+    const c1=(rows[i][1]!=null?rows[i][1]:'').toString().toLowerCase().trim();
+    if(c0===lc || c1===lc){
+      const r=rows[i-offset];
+      if(r){
+        const lbl=((r[0]||'')+' '+(r[1]||'')).toLowerCase();
+        if(!expect || lbl.includes(expect))
+          return Array.from({length:20},(_,k)=> parseNum(r[k+2]) || 0);
+      }
+    }
+  }
+  return null;
+}
+
 /* Helper: normalizza un valore percentuale in formato "XX%" (senza decimali).
    Casi gestiti:
    • "21,60%"  → "22%"        (arrotonda)
@@ -3082,36 +3116,49 @@ function updateFromSheet(sheets){
   const inflG_dec = 0.05;                            // inflazione gas
   const decModuli = 0.005;                           // decadimento moduli/anno
 
-  // Righe OUTPUT lette via Sheets API (null se non raggiungibile → fallback sintetico)
+  // ── Serie 20 anni (colonne C..V) lette dal tab OUTPUT via CSV gviz ──────────
+  //   CON:   Elettricità=C32:V32 · Riscaldamento=C33:V33 · Vendita+CER=C40:V40
+  //   SENZA: Elettricità=C72:V72 · Riscaldamento(gas)=C73:V73
+  // "Energia elettrica/termica" (R32/R33) sono etichette duplicate → uso l'àncora
+  // univoca "TOTALE COSTI ENERGETICI" (R34) e prendo le 2 righe sopra. Niente Sheets
+  // API (bloccata su alcuni browser): stesso canale gviz del resto della pagina.
+  let r_ricavi   = outRowSeries(outputRaw,'Totale ricavi');
+  let r_elC      = outRowSeriesBefore(outputRaw,'TOTALE COSTI ENERGETICI',2,'elettric');
+  let r_risc     = outRowSeriesBefore(outputRaw,'TOTALE COSTI ENERGETICI',1,'termic');
+  let r_senzaEl  = outRowSeries(outputRaw,'Costi energia elettrica ante operam');
+  let r_senzaGas = outRowSeries(outputRaw,'Costi energia termica ante operam');
+  // Fallback secondario: Sheets API (sheets.out20), se disponibile
   const out20 = (sheets && !Array.isArray(sheets)) ? sheets.out20 : null;
-  const hasOut = !!(out20 && out20.ricavi && out20.ricavi.length === 20);
+  if(out20){
+    r_ricavi=r_ricavi||out20.ricavi; r_elC=r_elC||out20.elC; r_risc=r_risc||out20.risc;
+    r_senzaEl=r_senzaEl||out20.senzaEl; r_senzaGas=r_senzaGas||out20.senzaGas;
+  }
+  const hasCon   = !!(r_ricavi && r_elC && r_risc);
+  const hasSenza = !!(r_senzaEl && r_senzaGas);
 
-  // ── SENZA impianto: elettricità (OUTPUT!C72:V72) + gas (C73:V73), media 20 anni ──
+  // ── SENZA impianto: elettricità (C72) + gas (C73), media 20 anni ──
   const senzaArr = [];
   let sumElS=0, sumGasS=0;
   for (let i = 0; i < 20; i++) {
-    const elS  = hasOut ? Math.round(out20.senzaEl[i]||0)  : Math.round(spEl*Math.pow(1+inflB_dec,i));
-    const gasS = hasOut ? Math.round(out20.senzaGas[i]||0) : Math.round(spGas*Math.pow(1+inflG_dec,i));
+    const elS  = hasSenza ? Math.round(r_senzaEl[i]||0)  : Math.round(spEl*Math.pow(1+inflB_dec,i));
+    const gasS = hasSenza ? Math.round(r_senzaGas[i]||0) : Math.round(spGas*Math.pow(1+inflG_dec,i));
     senzaArr.push(-(elS + gasS));   // spesa → sotto lo zero
     sumElS+=elS; sumGasS+=gasS;
   }
 
-  // ── CON impianto: serie 20 anni DIRETTE dalle righe OUTPUT (media su C:V) ──
-  //   Elettricità – Immobile = OUTPUT!C32:V32 · Riscaldamento = C33:V33
-  //   Vendita energia + CER  = OUTPUT!C40:V40 ("Totale ricavi": vendita+detrazione+CER)
-  // Lette via Sheets API (sheets.out20). Fallback: modello sintetico dal foglio.
+  // ── CON impianto: vendita+CER (C40) − elettricità (C32) − riscaldamento (C33) ──
   const conArr = [];
   let sumElC=0, sumVend=0, sumRiscC=0;
-  if (hasOut) {
+  if (hasCon) {
     for (let i = 0; i < 20; i++) {
-      const elC = Math.round(out20.elC[i]||0);
-      const riscC = Math.round(out20.risc[i]||0);
-      const ric = Math.round(out20.ricavi[i]||0);
+      const elC = Math.round(r_elC[i]||0);
+      const riscC = Math.round(r_risc[i]||0);
+      const ric = Math.round(r_ricavi[i]||0);
       conArr.push(ric - elC - riscC);   // >0 = guadagno (sopra lo zero)
       sumElC+=elC; sumVend+=ric; sumRiscC+=riscC;
     }
   } else {
-    // Fallback sintetico se la Sheets API non è raggiungibile
+    // Fallback sintetico se le righe OUTPUT non sono leggibili
     const bal = window._bilancio;
     const venditaKwh = bal ? bal.venduto
                      : (parseNum(findVal(budget,'Totale surplus energia venduta')) || Math.round((prodRaw||4915)*0.63));
