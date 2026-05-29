@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-27-nota-cer-20-anni">
+<meta name="execo-version" content="2026-05-27-pag6-da-output-rows">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -3036,7 +3036,6 @@ function updateFromSheet(sheets){
   const costRiscPost = costDetail > 0
                      ? costDetail
                      : Math.round(c108 + c91);
-  console.log('[pag5 costRiscPost] C108=' + c108 + ', C91=' + c91 + ', costGasResPost=' + costGasResPost + ', costHpGrid=' + costHpGrid + ' → POST=€' + costRiscPost);
 
   const rispAnn        = costGasAnte - costRiscPost;
   const rispPct        = costGasAnte>0 ? Math.round(rispAnn/costGasAnte*100) : 0;
@@ -3083,36 +3082,51 @@ function updateFromSheet(sheets){
   const inflG_dec = 0.05;                            // inflazione gas
   const decModuli = 0.005;                           // decadimento moduli/anno
 
-  // Basi anno 1 (dal foglio)
-  const bal = window._bilancio;
-  const venditaKwh = bal ? bal.venduto
-                   : (parseNum(findVal(budget,'Totale surplus energia venduta'))
-                   || Math.round((prodRaw||4915)*0.63));
-  const cerKwh    = bal ? bal.cerKwh : Math.round(venditaKwh*0.75);
-  const pCERloc   = parseNum(findVal(all,'Incentivo energia condivisa kWh')) || 0.06;
-  const guadVendY1 = Math.round(venditaKwh*(pS||0.11));   // vendita €/anno 1
-  const guadCerY1  = Math.round(cerKwh*pCERloc);          // CER €/anno 1
-  const costElRidottoY1 = parseNum(findVal(all,'spesa energia elettrica per utenza domestica extra pdc'))
-                       || (parseNum(findVal(all,'energia prelevata da rete per utenza domestica extra pdc')) * (pB||0.34))
-                       || 0;                              // elettr. domestica residua €/anno 1
-  const costRiscY1 = (costGasResPost||0) + (costHpGrid||0); // riscaldamento (PdC) €/anno 1
-
-  // Serie 20 anni (sorgente unica di grafico e card)
-  const senzaArr = [], conArr = [];
-  let sumElS=0, sumGasS=0, sumElC=0, sumVend=0, sumRiscC=0;
+  // ── SENZA impianto: elettricità + gas, inflazione composta (positivo = sotto zero) ──
+  const senzaArr = [];
+  let sumElS=0, sumGasS=0;
   for (let i = 0; i < 20; i++) {
-    const fEl   = Math.pow(1+inflB_dec, i);
-    const fGas  = Math.pow(1+inflG_dec, i);
-    const fRisc = Math.pow(1+(inflB_dec+inflG_dec)/2, i);
-    const fVend = Math.pow(1-decModuli, i) * Math.pow(1+inflS_dec, i);
-    const elS   = Math.round(spEl*fEl),  gasS = Math.round(spGas*fGas);
-    // Convenzione grafico: positivo = in alto (guadagno), negativo = in basso (spesa).
-    senzaArr.push(-(elS + gasS));            // spesa → sotto lo zero
-    const vendIncome = Math.round(guadVendY1*fVend + guadCerY1*fVend);  // CER per tutti i 20 anni
-    const elC   = Math.round((costElRidottoY1||0)*fEl);
-    const riscC = Math.round(costRiscY1*fRisc);
-    conArr.push(vendIncome - elC - riscC);   // >0 = guadagno annuo (barra sopra lo zero)
-    sumElS+=elS; sumGasS+=gasS; sumElC+=elC; sumVend+=vendIncome; sumRiscC+=riscC;
+    const elS  = Math.round(spEl*Math.pow(1+inflB_dec,i));
+    const gasS = Math.round(spGas*Math.pow(1+inflG_dec,i));
+    senzaArr.push(-(elS + gasS));   // spesa → sotto lo zero
+    sumElS+=elS; sumGasS+=gasS;
+  }
+
+  // ── CON impianto: serie 20 anni DIRETTE dalle righe OUTPUT (media su C:V) ──
+  //   Elettricità – Immobile = OUTPUT!C32:V32 · Riscaldamento = C33:V33
+  //   Vendita energia + CER  = OUTPUT!C40:V40 ("Totale ricavi": vendita+detrazione+CER)
+  // Lette via Sheets API (sheets.out20). Fallback: modello sintetico dal foglio.
+  const out20 = (sheets && !Array.isArray(sheets)) ? sheets.out20 : null;
+  const conArr = [];
+  let sumElC=0, sumVend=0, sumRiscC=0;
+  if (out20 && out20.ricavi && out20.ricavi.length === 20) {
+    for (let i = 0; i < 20; i++) {
+      const elC = Math.round(out20.elC[i]||0);
+      const riscC = Math.round(out20.risc[i]||0);
+      const ric = Math.round(out20.ricavi[i]||0);
+      conArr.push(ric - elC - riscC);   // >0 = guadagno (sopra lo zero)
+      sumElC+=elC; sumVend+=ric; sumRiscC+=riscC;
+    }
+  } else {
+    // Fallback sintetico se la Sheets API non è raggiungibile
+    const bal = window._bilancio;
+    const venditaKwh = bal ? bal.venduto
+                     : (parseNum(findVal(budget,'Totale surplus energia venduta')) || Math.round((prodRaw||4915)*0.63));
+    const cerKwh    = bal ? bal.cerKwh : Math.round(venditaKwh*0.75);
+    const pCERloc   = parseNum(findVal(all,'Incentivo energia condivisa kWh')) || 0.06;
+    const guadVendY1 = Math.round(venditaKwh*(pS||0.11));
+    const guadCerY1  = Math.round(cerKwh*pCERloc);
+    const costElRidottoY1 = parseNum(findVal(all,'spesa energia elettrica per utenza domestica extra pdc'))
+                         || (parseNum(findVal(all,'energia prelevata da rete per utenza domestica extra pdc')) * (pB||0.34)) || 0;
+    const costRiscY1 = (costGasResPost||0) + (costHpGrid||0);
+    for (let i = 0; i < 20; i++) {
+      const fEl=Math.pow(1+inflB_dec,i), fRisc=Math.pow(1+(inflB_dec+inflG_dec)/2,i), fVend=Math.pow(1-decModuli,i)*Math.pow(1+inflS_dec,i);
+      const vendIncome = Math.round(guadVendY1*fVend + guadCerY1*fVend);
+      const elC = Math.round(costElRidottoY1*fEl);
+      const riscC = Math.round(costRiscY1*fRisc);
+      conArr.push(vendIncome - elC - riscC);
+      sumElC+=elC; sumVend+=vendIncome; sumRiscC+=riscC;
+    }
   }
 
   // Aggiorna il grafico (foglio → grafico)
@@ -3129,7 +3143,7 @@ function updateFromSheet(sheets){
   const m_elC   = Math.round(sumElC/20);
   const m_vend  = Math.round(sumVend/20);
   const m_riscC = Math.round(sumRiscC/20);
-  const m_saldo = Math.round((sumVend - sumElC - sumRiscC)/20);  // = media barre verdi (>0 = guadagno)
+  const m_saldo = Math.round((sumVend - sumElC - sumRiscC)/20);  // = media barre verdi
   setText('c7-el-s','€ '+m_elS.toLocaleString('it-IT'));
   setText('c7-gas-s','€ '+m_gasS.toLocaleString('it-IT'));
   setText('c7-tot-s','− € '+m_totS.toLocaleString('it-IT'));      // è una spesa
@@ -3353,7 +3367,6 @@ function updateFromSheet(sheets){
   const cerKwhBase     = parseNum(findCellAtColumn(all,'Energia condivisa in CER', 2))
                        || c_cerVal
                        || 0;
-  console.log('[chart Vendita+CER] vendBase=' + venditaKwhBase + ' kWh, cerBase=' + cerKwhBase + ' kWh, pS=' + pS_loc + ', pCER=' + pCER_loc + ', inflS=' + inflS_num);
 
   // Se non riesco a leggere i kWh base dal foglio, NON aggiorno il chart
   // (lascio il valore precedente o il fallback HTML, anziché degradare a 0).
@@ -3370,7 +3383,6 @@ function updateFromSheet(sheets){
     );
     const sumVend20 = vendSeries.reduce((a,b)=>a+b, 0);
     const sumCer20  = cerSeries.reduce((a,b)=>a+b, 0);
-    console.log('[chart Vendita+CER] anno 1: vendita=€' + vendSeries[0] + ' + CER=€' + cerSeries[0] + ' = €' + (vendSeries[0]+cerSeries[0]) + ', tot 20a: €' + (sumVend20+sumCer20));
 
     const tot20VC = sumVend20 + sumCer20;
     const anno1VC = (vendSeries[0] || 0) + (cerSeries[0] || 0);
@@ -3752,9 +3764,26 @@ async function fetchSheet(){
     }
   }catch(e){ console.warn('[fetchSheet] ANTE Sheets API fallito:', e.message); }
 
+  // PAG 6 "Con l'impianto" — medie 20 anni lette DIRETTAMENTE dalle righe OUTPUT
+  // (richiesta utente): C32:V32 = costi elettrici post, C33:V33 = costi termici post,
+  // C40:V40 = Totale ricavi (vendita+detrazione+CER). Lettura per coordinata via
+  // Sheets API (il CSV gviz scarta le righe vuote e disallinea i numeri di riga).
+  let out20 = null;
+  try{
+    const u = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/OUTPUT!C32:V40?valueRenderOption=UNFORMATTED_VALUE&key=${SHEETS_KEY}&_t=${Date.now()}`;
+    const ro = await fetch(u, {cache:'no-store'});
+    if(ro.ok){
+      const vv = (await ro.json()).values || [];
+      const row = idx => Array.from({length:20}, (_,k)=>{ const x=(vv[idx]||[])[k]; return typeof x==='number'?x:(parseNum(x)||0); });
+      // range C32:V40 → indice 0=riga32, 1=riga33, 8=riga40
+      out20 = { elC: row(0), risc: row(1), ricavi: row(8) };
+      console.log('[fetchSheet] OUTPUT C32/C33/C40 via Sheets API OK');
+    }
+  }catch(e){ console.warn('[fetchSheet] OUTPUT rows Sheets API fallito:', e.message); }
+
   // outputRaw = SOLO il tab OUTPUT (riga 1 = indice 0), per le letture getCell() per
   // coordinata fissa (es. C37/C39): 'output' contiene AMMORTAMENTO in testa e sfaserebbe gli indici.
-  return {start, budget, output, outputRaw: results['OUTPUT'] || [], all, budgetAnte};
+  return {start, budget, output, outputRaw: results['OUTPUT'] || [], all, budgetAnte, out20};
 }
 
 /* ══ CATALOGO PRODOTTI ════════════════════════════════════
