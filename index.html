@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-29-pag6-da-gviz">
+<meta name="execo-version" content="2026-05-29-sheet-id-da-url">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -2388,8 +2388,12 @@ function safePrint(){
 /* ══════════════════════════════════════════════
    CONFIGURAZIONE
 ══════════════════════════════════════════════ */
-const SHEET_ID  = '1gI6xhJbd9kTZptyNz9PyOYw35nxO1hlGaUsuED9TyDI';
-const CATALOG_SHEET_ID = '1G1QOHRc_iVez7F_zrSCfwUOJjrajpNzN_ETtSg3ynfY';   // CATALOGO_PRODOTTI (img_id completi: pannelli + inverter + batterie)
+/* SHEET_ID per-cliente via URL: aggiungi "?sheet=<ID>" al link per puntare al
+   foglio di quel cliente. Senza parametro usa il foglio di default. Esempio:
+   https://execosrl.github.io/preventivi/?sheet=1AbC...XyZ                     */
+const SHEET_ID  = new URLSearchParams(location.search).get('sheet')
+               || '1gI6xhJbd9kTZptyNz9PyOYw35nxO1hlGaUsuED9TyDI';
+const CATALOG_SHEET_ID = '1G1QOHRc_iVez7F_zrSCfwUOJjrajpNzN_ETtSg3ynfY';   // CATALOGO_PRODOTTI condiviso tra tutti i clienti
 const SHEETS_KEY= 'AIzaSyARrIvWnTryvBrYoxoDkun_8iAoVDLIF4k';
 /* ⚠ SICUREZZA: questa API key è esposta lato client.
    In Google Cloud Console DEVE essere ristretta a:
