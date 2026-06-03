@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-29-sheet-id-da-url">
+<meta name="execo-version" content="2026-05-29-img-sito-da-foglio">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -982,7 +982,7 @@ body{background:#b8ccb4;color:var(--dark);font-size:13px}
       </div>
     </div>
 
-    <div style="margin-top:10px" class="st">Vista satellitare</div>
+    <div style="margin-top:10px" class="st" id="map-section-title">Vista del sito</div>
     <div class="card" style="padding:0;overflow:hidden;border-radius:10px;position:relative">
       <img id="map-static"
            src="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=12.234990,43.364263,12.237190,43.366263&bboxSR=4326&imageSR=3857&size=900,430&format=png&f=image"
@@ -2795,19 +2795,33 @@ function updateFromSheet(sheets){
     setText('card-lon',lonS);
     setText('sim-lat',latS);
     setText('sim-lon',lonS);
-    // Aggiorna immagine satellitare statica (ESRI World Imagery) per le coordinate reali
+    // Aggiorna immagine sito: prima cerca un'immagine indicata dal foglio (etichetta
+    // "Immagine sito installazione"); se non c'è, usa la satellitare ESRI calcolata
+    // dalle coordinate. L'utente può incollare un URL completo o l'ID/link di un file
+    // Google Drive (impostato a "Chiunque con il link → Visualizzatore").
     const img=document.getElementById('map-static');
     if(img){
-      const d=0.0011; // ~ zoom 18 (1100m bbox)
-      const bbox=(LON-d)+','+(LAT-d)+','+(LON+d)+','+(LAT+d);
-      // Reset stato e fallback
-      img.dataset.loaded='0';
       const fb=document.getElementById('map-fallback');
       if(fb) fb.style.display='none';
-      // Aggiorna anche le coordinate nel fallback
+      img.dataset.loaded='0';
       setText('map-fb-coords', latS+', '+lonS);
-      // Cache-bust per forzare il reload se le coordinate cambiano
-      img.src='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox='+bbox+'&bboxSR=4326&imageSR=3857&size=900,430&format=png&f=image';
+
+      let customImg = (findVal(all,'Immagine sito installazione') || findVal(all,'Foto sito') || '').toString().trim();
+      let url = null;
+      if (customImg) {
+        const driveMatch = customImg.match(/\/d\/([A-Za-z0-9_-]{20,})/)        // link "drive.google.com/file/d/<ID>/…"
+                       || customImg.match(/[?&]id=([A-Za-z0-9_-]{20,})/)        // link "open?id=<ID>"
+                       || (/^[A-Za-z0-9_-]{20,}$/.test(customImg) ? [null, customImg] : null);  // ID nudo
+        if (driveMatch) url = driveThumb(driveMatch[1], 900);
+        else if (/^https?:\/\//i.test(customImg)) url = customImg;            // URL diretto a un'immagine
+      }
+      if (!url) {
+        // Fallback: satellite ESRI sulle coordinate reali (zoom ~18)
+        const d=0.0011;
+        const bbox=(LON-d)+','+(LAT-d)+','+(LON+d)+','+(LAT+d);
+        url = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox='+bbox+'&bboxSR=4326&imageSR=3857&size=900,430&format=png&f=image';
+      }
+      img.src = url;
     }
   }
 
