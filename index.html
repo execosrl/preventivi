@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="execo-version" content="2026-05-29-img-sito-da-foglio">
+<meta name="execo-version" content="2026-05-29-img-etichetta-IMMAGINE">
 <title>Preventivo Execo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -2806,7 +2806,7 @@ function updateFromSheet(sheets){
       img.dataset.loaded='0';
       setText('map-fb-coords', latS+', '+lonS);
 
-      let customImg = (findVal(all,'Immagine sito installazione') || findVal(all,'Foto sito') || '').toString().trim();
+      let customImg = (findVal(all,'IMMAGINE') || findVal(all,'Immagine sito installazione') || findVal(all,'Foto sito') || '').toString().trim();
       let url = null;
       if (customImg) {
         const driveMatch = customImg.match(/\/d\/([A-Za-z0-9_-]{20,})/)        // link "drive.google.com/file/d/<ID>/…"
